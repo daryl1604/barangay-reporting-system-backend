@@ -1,6 +1,87 @@
 const Report = require("../models/Report");
 const Notification = require("../models/Notification");
+const User = require("../models/User");
 
+function getPeriodStart(period) {
+  const now = new Date();
+
+  if (period === "month") {
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+
+  const dayIndex = now.getDay();
+  const diffToMonday = (dayIndex + 6) % 7;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday);
+}
+
+function shiftPeriod(startDate, period, direction) {
+  const nextDate = new Date(startDate);
+
+  if (period === "month") {
+    nextDate.setMonth(nextDate.getMonth() + direction);
+    return nextDate;
+  }
+
+  nextDate.setDate(nextDate.getDate() + direction * 7);
+  return nextDate;
+}
+
+function buildPeriodFilter(startDate, period) {
+  return {
+    $gte: startDate,
+    $lt: shiftPeriod(startDate, period, 1)
+  };
+}
+
+function buildStatusSummary(reports) {
+  return {
+    pending: reports.filter((report) => report.status === "pending").length,
+    ongoing: reports.filter((report) => report.status === "in_progress").length,
+    resolved: reports.filter((report) => report.status === "resolved").length
+  };
+}
+
+function buildCountMap(reports, keyName) {
+  return Object.entries(
+    reports.reduce((result, report) => {
+      const key = report[keyName] || "Unspecified";
+      result[key] = (result[key] || 0) + 1;
+      return result;
+    }, {})
+  ).map(([label, value]) => ({ label, value }));
+}
+
+function getTopItem(items) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return [...items].sort((leftItem, rightItem) => rightItem.value - leftItem.value)[0];
+}
+
+function getYearStart(yearOffset = 0) {
+  const now = new Date();
+  return new Date(now.getFullYear() + yearOffset, 0, 1);
+}
+
+function buildYearlyTimeline(reports, yearStart) {
+  const timeline = Array.from({ length: 12 }, (_, index) => ({
+    label: new Date(yearStart.getFullYear(), index, 1).toLocaleString("en-US", { month: "short" }),
+    value: 0
+  }));
+
+  reports.forEach((report) => {
+    const createdAt = new Date(report.createdAt);
+
+    if (Number.isNaN(createdAt.getTime()) || createdAt.getFullYear() !== yearStart.getFullYear()) {
+      return;
+    }
+
+    timeline[createdAt.getMonth()].value += 1;
+  });
+
+  return timeline;
+}
 
 // RESIDENT: Create Report
 exports.createReport = async (req, res) => {
@@ -17,6 +98,21 @@ exports.createReport = async (req, res) => {
     });
 
     await report.save();
+
+    try {
+      const admins = await User.find({ role: "admin" }).select("_id");
+
+      if (admins.length > 0) {
+        await Notification.insertMany(
+          admins.map((admin) => ({
+            user: admin._id,
+            message: `A new ${category} report was submitted in ${purok || "an unspecified purok"}.`
+          }))
+        );
+      }
+    } catch (notificationError) {
+      console.error("Admin notification creation failed:", notificationError.message);
+    }
 
     res.status(201).json(report);
   } catch (err) {
@@ -91,6 +187,21 @@ exports.updateStatus = async (req, res) => {
 
     res.json(report);
 
+  } catch (err) {
+    res.status(500).json({ msg: "Server error" });
+  }
+};
+
+// ADMIN: Delete Report
+exports.deleteReport = async (req, res) => {
+  try {
+    const report = await Report.findByIdAndDelete(req.params.id);
+
+    if (!report) {
+      return res.status(404).json({ msg: "Report not found" });
+    }
+
+    res.json({ msg: "Report deleted successfully", reportId: req.params.id });
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
   }
@@ -177,6 +288,107 @@ exports.getDashboardSummary = async (req, res) => {
       resolved
     });
 
+  } catch (err) {
+    res.status(500).json({ msg: "Server error" });
+  }
+};
+
+// ADMIN: Analytics summary by period
+exports.getAnalyticsPeriodSummary = async (req, res) => {
+  try {
+    const period = req.query.period === "month" ? "month" : "week";
+    const currentStart = getPeriodStart(period);
+    const previousStart = shiftPeriod(currentStart, period, -1);
+
+    const [currentReports, previousReports] = await Promise.all([
+      Report.find({ createdAt: buildPeriodFilter(currentStart, period) }).select("status category purok createdAt"),
+      Report.find({ createdAt: buildPeriodFilter(previousStart, period) }).select("status category purok createdAt")
+    ]);
+
+    res.json({
+      period,
+      current: {
+        total: currentReports.length,
+        ...buildStatusSummary(currentReports)
+      },
+      previous: {
+        total: previousReports.length,
+        ...buildStatusSummary(previousReports)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error" });
+  }
+};
+
+// ADMIN: Analytics trends by period
+exports.getAnalyticsTrends = async (req, res) => {
+  try {
+    const period = req.query.period === "month" ? "month" : "week";
+    const currentStart = getPeriodStart(period);
+    const currentReports = await Report.find({
+      createdAt: buildPeriodFilter(currentStart, period)
+    }).select("status category purok createdAt");
+
+    const categoryCounts = buildCountMap(currentReports, "category");
+    const purokCounts = buildCountMap(currentReports, "purok");
+
+    res.json({
+      period,
+      total: currentReports.length,
+      statusSummary: buildStatusSummary(currentReports),
+      topCategory: getTopItem(categoryCounts),
+      topPurok: getTopItem(purokCounts),
+      categoryCounts,
+      purokCounts
+    });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error" });
+  }
+};
+
+// ADMIN: Yearly analytics
+exports.getYearlyAnalytics = async (req, res) => {
+  try {
+    const currentStart = getYearStart(0);
+    const nextYearStart = getYearStart(1);
+    const previousStart = getYearStart(-1);
+
+    const [currentReports, previousReports] = await Promise.all([
+      Report.find({
+        createdAt: {
+          $gte: currentStart,
+          $lt: nextYearStart
+        }
+      }).select("status category purok createdAt"),
+      Report.find({
+        createdAt: {
+          $gte: previousStart,
+          $lt: currentStart
+        }
+      }).select("status category purok createdAt")
+    ]);
+
+    const categoryCounts = buildCountMap(currentReports, "category");
+    const purokCounts = buildCountMap(currentReports, "purok");
+
+    res.json({
+      period: "year",
+      current: {
+        total: currentReports.length,
+        ...buildStatusSummary(currentReports)
+      },
+      previous: {
+        total: previousReports.length,
+        ...buildStatusSummary(previousReports)
+      },
+      statusSummary: buildStatusSummary(currentReports),
+      topCategory: getTopItem(categoryCounts),
+      topPurok: getTopItem(purokCounts),
+      categoryCounts,
+      purokCounts,
+      timeline: buildYearlyTimeline(currentReports, currentStart)
+    });
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
   }

@@ -5,9 +5,13 @@ const {
   getMyReports,
   getAllReports,
   updateStatus,
+  deleteReport,
   addComment,
   getPurokAnalytics,
-  getDashboardSummary
+  getDashboardSummary,
+  getAnalyticsPeriodSummary,
+  getAnalyticsTrends,
+  getYearlyAnalytics
 } = require("../controllers/reportController");
 
 const { protect, authorize } = require("../middleware/authMiddleware");
@@ -19,11 +23,15 @@ router.get("/my", protect, authorize("resident"), getMyReports);
 // Admin Routes
 router.get("/all", protect, authorize("admin"), getAllReports);
 router.put("/:id", protect, authorize("admin"), updateStatus);
+router.delete("/:id", protect, authorize("admin"), deleteReport);
 
 router.post("/:id/comment", protect, addComment);
 
 router.get("/analytics/purok", protect, authorize("admin"), getPurokAnalytics);
 
 router.get("/analytics/summary", protect, authorize("admin"), getDashboardSummary);
+router.get("/analytics/period-summary", protect, authorize("admin"), getAnalyticsPeriodSummary);
+router.get("/analytics/trends", protect, authorize("admin"), getAnalyticsTrends);
+router.get("/analytics/yearly", protect, authorize("admin"), getYearlyAnalytics);
 
 module.exports = router;

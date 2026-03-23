@@ -5,6 +5,8 @@ const connectDB = require("./config/db");
 const authRoutes = require("./routes/auth");
 const reportRoutes = require("./routes/report");
 const notificationRoutes = require("./routes/notification");
+const announcementRoutes = require("./routes/announcement");
+const reportSummaryRoutes = require("./routes/reportSummary");
 
 
 dotenv.config();
@@ -15,7 +17,9 @@ app.use(cors());
 app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/reports/summaries", reportSummaryRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/announcements", announcementRoutes);
 
 connectDB();
 

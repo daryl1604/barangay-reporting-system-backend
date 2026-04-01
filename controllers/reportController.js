@@ -1,6 +1,8 @@
 const Report = require("../models/Report");
 const Notification = require("../models/Notification");
 const User = require("../models/User");
+const fs = require("fs");
+const path = require("path");
 
 function getPeriodStart(period) {
   const now = new Date();
@@ -81,6 +83,55 @@ function buildYearlyTimeline(reports, yearStart) {
   });
 
   return timeline;
+}
+
+function sanitizeFileName(fileName = "attachment") {
+  return String(fileName)
+    .replace(/[^\w.\-]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "attachment";
+}
+
+async function persistCommentAttachment(attachment) {
+  if (!attachment?.url) {
+    return undefined;
+  }
+
+  const isDataUrl = /^data:/i.test(attachment.url);
+
+  if (!isDataUrl) {
+    return {
+      name: String(attachment.name || "Attachment").trim(),
+      mimeType: String(attachment.mimeType || "").trim(),
+      url: String(attachment.url).trim(),
+      isImage: Boolean(attachment.isImage),
+    };
+  }
+
+  const matches = attachment.url.match(/^data:([^;]+);base64,(.+)$/);
+
+  if (!matches) {
+    throw new Error("Invalid attachment payload");
+  }
+
+  const mimeType = matches[1];
+  const base64Data = matches[2];
+  const extension = mimeType.split("/")[1] || "bin";
+  const uploadsDir = path.join(__dirname, "..", "uploads", "comment-attachments");
+
+  await fs.promises.mkdir(uploadsDir, { recursive: true });
+
+  const safeName = sanitizeFileName(attachment.name);
+  const fileName = `${Date.now()}-${safeName.replace(/\.[^.]+$/, "")}.${extension}`;
+  const absoluteFilePath = path.join(uploadsDir, fileName);
+
+  await fs.promises.writeFile(absoluteFilePath, Buffer.from(base64Data, "base64"));
+
+  return {
+    name: String(attachment.name || fileName).trim(),
+    mimeType,
+    url: `/uploads/comment-attachments/${fileName}`,
+    isImage: mimeType.startsWith("image/"),
+  };
 }
 
 // RESIDENT: Create Report
@@ -232,14 +283,29 @@ exports.addComment = async (req, res) => {
       return res.status(404).json({ msg: "Report not found" });
     }
 
+    const nextText = String(req.body.text || "").trim();
+    const nextAttachment = req.body.attachment;
+
+    if (!nextText && !nextAttachment?.url) {
+      return res.status(400).json({ msg: "Comment text or attachment is required" });
+    }
+
+    let attachment;
+
+    if (nextAttachment?.url) {
+      attachment = await persistCommentAttachment(nextAttachment);
+    }
+
     const comment = {
       user: req.user.id,
-      text: req.body.text
+      text: nextText,
+      attachment,
     };
 
     report.comments.push(comment);
 
     await report.save();
+    await report.populate("comments.user", "name");
 
     // Notify resident
     await Notification.create({
@@ -304,6 +370,29 @@ exports.getDashboardSummary = async (req, res) => {
       resolved
     });
 
+  } catch (err) {
+    res.status(500).json({ msg: "Server error" });
+  }
+};
+
+// ADMIN: Resident-specific report summary
+exports.getResidentReportSummary = async (req, res) => {
+  try {
+    const residentId = req.params.residentId;
+
+    const [totalReports, pending, inProgress, resolved] = await Promise.all([
+      Report.countDocuments({ resident: residentId }),
+      Report.countDocuments({ resident: residentId, status: "pending" }),
+      Report.countDocuments({ resident: residentId, status: "in_progress" }),
+      Report.countDocuments({ resident: residentId, status: "resolved" }),
+    ]);
+
+    res.json({
+      totalReports,
+      pending,
+      inProgress,
+      resolved,
+    });
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
   }

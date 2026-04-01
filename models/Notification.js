@@ -7,14 +7,22 @@ const notificationSchema = new mongoose.Schema(
       ref: "User",
       required: true
     },
-    report: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Report",
-      default: null
+    title: {
+      type: String,
+      default: ""
     },
     message: {
       type: String,
       required: true
+    },
+    type: {
+      type: String,
+      default: "general"
+    },
+    report: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Report",
+      default: null
     },
     read: {
       type: Boolean,

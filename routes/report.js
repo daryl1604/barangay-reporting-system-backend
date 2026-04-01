@@ -11,6 +11,7 @@ const {
   deleteComment,
   getPurokAnalytics,
   getDashboardSummary,
+  getResidentReportSummary,
   getAnalyticsPeriodSummary,
   getAnalyticsTrends,
   getYearlyAnalytics
@@ -34,6 +35,7 @@ router.delete("/:id/comment/:commentId", protect, authorize("admin"), deleteComm
 router.get("/analytics/purok", protect, authorize("admin"), getPurokAnalytics);
 
 router.get("/analytics/summary", protect, authorize("admin"), getDashboardSummary);
+router.get("/resident/:residentId/summary", protect, authorize("admin"), getResidentReportSummary);
 router.get("/analytics/period-summary", protect, authorize("admin"), getAnalyticsPeriodSummary);
 router.get("/analytics/trends", protect, authorize("admin"), getAnalyticsTrends);
 router.get("/analytics/yearly", protect, authorize("admin"), getYearlyAnalytics);

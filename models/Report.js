@@ -36,6 +36,15 @@ const reportSchema = new mongoose.Schema(
           ref: "User"
         },
         text: String,
+        attachment: {
+          name: String,
+          mimeType: String,
+          url: String,
+          isImage: {
+            type: Boolean,
+            default: false
+          }
+        },
         date: {
           type: Date,
           default: Date.now

@@ -5,7 +5,7 @@ exports.getMyNotifications = async (req, res) => {
   try {
     const notifications = await Notification.find({
       user: req.user.id
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: -1 }).lean();
 
     res.json(notifications);
   } catch (err) {

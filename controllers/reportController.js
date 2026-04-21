@@ -134,6 +134,14 @@ async function persistCommentAttachment(attachment) {
   };
 }
 
+function buildReportListQuery(filter = {}) {
+  return Report.find(filter)
+    .select("resident category description location purok status createdAt updatedAt")
+    .populate("resident", "name email")
+    .sort({ createdAt: -1 })
+    .lean();
+}
+
 // RESIDENT: Create Report
 exports.createReport = async (req, res) => {
   try {
@@ -205,13 +213,28 @@ exports.getAllReports = async (req, res) => {
       if (endDate) filter.createdAt.$lte = new Date(endDate);
     }
 
-    const reports = await Report.find(filter)
-      .populate("resident", "name email")
-      .populate("comments.user", "name")
-      .sort({ createdAt: -1 });
+    const reports = await buildReportListQuery(filter);
 
     res.json(reports);
 
+  } catch (err) {
+    res.status(500).json({ msg: "Server error" });
+  }
+};
+
+// ADMIN: Get report details
+exports.getReportById = async (req, res) => {
+  try {
+    const report = await Report.findById(req.params.id)
+      .populate("resident", "name email")
+      .populate("comments.user", "name")
+      .lean();
+
+    if (!report) {
+      return res.status(404).json({ msg: "Report not found" });
+    }
+
+    res.json(report);
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
   }

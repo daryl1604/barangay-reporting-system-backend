@@ -4,7 +4,8 @@ exports.getReportSummaries = async (req, res) => {
   try {
     const summaries = await ReportSummary.find()
       .populate("createdBy", "name")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     res.json(summaries);
   } catch (err) {

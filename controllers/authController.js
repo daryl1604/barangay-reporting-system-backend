@@ -140,7 +140,8 @@ exports.getResidents = async (_req, res) => {
   try {
     const residents = await User.find({ role: "resident" })
       .select("-password")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     res.json(residents);
   } catch (err) {

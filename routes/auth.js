@@ -1,10 +1,11 @@
 const express = require("express");
 const router = express.Router();
-const { register, login, getResidents, getResidentById, deleteResident } = require("../controllers/authController");
+const { register, login, updateMyProfile, getResidents, getResidentById, deleteResident } = require("../controllers/authController");
 const { protect, authorize } = require("../middleware/authMiddleware");
 
 router.post("/register", register);
 router.post("/login", login);
+router.put("/me", protect, updateMyProfile);
 router.get("/admin/residents", protect, authorize("admin"), getResidents);
 router.get("/admin/residents/:id", protect, authorize("admin"), getResidentById);
 router.delete("/admin/residents/:id", protect, authorize("admin"), deleteResident);

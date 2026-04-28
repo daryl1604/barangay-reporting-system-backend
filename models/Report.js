@@ -1,5 +1,18 @@
 const mongoose = require("mongoose");
 
+const attachmentSchema = new mongoose.Schema(
+  {
+    name: String,
+    mimeType: String,
+    url: String,
+    isImage: {
+      type: Boolean,
+      default: false
+    }
+  },
+  { _id: false }
+);
+
 const reportSchema = new mongoose.Schema(
   {
     resident: {
@@ -23,11 +36,20 @@ const reportSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    personInvolved: {
+      type: String,
+      trim: true
+    },
+    incidentDate: {
+      type: Date
+    },
     status: {
       type: String,
       enum: ["pending", "in_progress", "resolved"],
       default: "pending"
     },
+    attachment: attachmentSchema,
+    attachments: [attachmentSchema],
 
     comments: [
       {
@@ -36,15 +58,7 @@ const reportSchema = new mongoose.Schema(
           ref: "User"
         },
         text: String,
-        attachment: {
-          name: String,
-          mimeType: String,
-          url: String,
-          isImage: {
-            type: Boolean,
-            default: false
-          }
-        },
+        attachment: attachmentSchema,
         date: {
           type: Date,
           default: Date.now

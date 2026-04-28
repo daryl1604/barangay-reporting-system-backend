@@ -91,7 +91,7 @@ function sanitizeFileName(fileName = "attachment") {
     .replace(/^_+|_+$/g, "") || "attachment";
 }
 
-async function persistCommentAttachment(attachment) {
+async function persistAttachment(attachment, folderName = "comment-attachments") {
   if (!attachment?.url) {
     return undefined;
   }
@@ -116,7 +116,7 @@ async function persistCommentAttachment(attachment) {
   const mimeType = matches[1];
   const base64Data = matches[2];
   const extension = mimeType.split("/")[1] || "bin";
-  const uploadsDir = path.join(__dirname, "..", "uploads", "comment-attachments");
+  const uploadsDir = path.join(__dirname, "..", "uploads", folderName);
 
   await fs.promises.mkdir(uploadsDir, { recursive: true });
 
@@ -129,7 +129,7 @@ async function persistCommentAttachment(attachment) {
   return {
     name: String(attachment.name || fileName).trim(),
     mimeType,
-    url: `/uploads/comment-attachments/${fileName}`,
+    url: `/uploads/${folderName}/${fileName}`,
     isImage: mimeType.startsWith("image/"),
   };
 }
@@ -145,7 +145,15 @@ function buildReportListQuery(filter = {}) {
 // RESIDENT: Create Report
 exports.createReport = async (req, res) => {
   try {
-    const { category, description, location, purok, personInvolved } = req.body;
+    const { category, description, location, purok, personInvolved, date, attachment, attachments } = req.body;
+    const attachmentPayloads = Array.isArray(attachments)
+      ? attachments
+      : attachment
+        ? [attachment]
+        : [];
+    const persistedAttachments = (
+      await Promise.all(attachmentPayloads.map((item) => persistAttachment(item, "report-attachments")))
+    ).filter(Boolean);
 
     const report = new Report({
       resident: req.user.id,
@@ -153,7 +161,10 @@ exports.createReport = async (req, res) => {
       description,
       location,
       purok,
-      personInvolved
+      personInvolved,
+      incidentDate: date ? new Date(date) : undefined,
+      attachment: persistedAttachments[0],
+      attachments: persistedAttachments
     });
 
     await report.save();
@@ -166,6 +177,8 @@ exports.createReport = async (req, res) => {
           admins.map((admin) => ({
             user: admin._id,
             report: report._id,
+            title: "New resident report",
+            type: "new_report",
             message: `A new ${category} report was submitted in ${purok || "an unspecified purok"}.`
           }))
         );
@@ -185,6 +198,7 @@ exports.createReport = async (req, res) => {
 exports.getMyReports = async (req, res) => {
   try {
     const reports = await Report.find({ resident: req.user.id })
+      .populate("resident", "name email")
       .populate("comments.user", "name")
       .sort({ createdAt: -1 });
 
@@ -259,6 +273,8 @@ exports.updateStatus = async (req, res) => {
     await Notification.create({
       user: report.resident,
       report: report._id,
+      title: "Report status updated",
+      type: "status_update",
       message: `Your report status has been updated to ${status}`
     });
 
@@ -308,6 +324,16 @@ exports.addComment = async (req, res) => {
 
     const nextText = String(req.body.text || "").trim();
     const nextAttachment = req.body.attachment;
+    const isResident = req.user.role === "resident";
+    const isAdmin = req.user.role === "admin";
+
+    if (isResident && String(report.resident) !== req.user.id) {
+      return res.status(403).json({ msg: "Not authorized" });
+    }
+
+    if (!isResident && !isAdmin) {
+      return res.status(403).json({ msg: "Not authorized" });
+    }
 
     if (!nextText && !nextAttachment?.url) {
       return res.status(400).json({ msg: "Comment text or attachment is required" });
@@ -316,7 +342,7 @@ exports.addComment = async (req, res) => {
     let attachment;
 
     if (nextAttachment?.url) {
-      attachment = await persistCommentAttachment(nextAttachment);
+      attachment = await persistAttachment(nextAttachment, "comment-attachments");
     }
 
     const comment = {
@@ -330,12 +356,29 @@ exports.addComment = async (req, res) => {
     await report.save();
     await report.populate("comments.user", "name");
 
-    // Notify resident
-    await Notification.create({
-      user: report.resident,
-      report: report._id,
-      message: "Admin added a comment to your report"
-    });
+    if (isAdmin) {
+      await Notification.create({
+        user: report.resident,
+        report: report._id,
+        title: "Admin comment added",
+        type: "admin_alert",
+        message: "Admin added a comment to your report"
+      });
+    } else {
+      const admins = await User.find({ role: "admin" }).select("_id");
+
+      if (admins.length > 0) {
+        await Notification.insertMany(
+          admins.map((admin) => ({
+            user: admin._id,
+            report: report._id,
+            title: "Resident comment added",
+            type: "resident_comment",
+            message: "A resident added a comment to a report"
+          }))
+        );
+      }
+    }
 
     res.json(report.comments);
 

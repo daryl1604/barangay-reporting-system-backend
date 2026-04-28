@@ -140,6 +140,65 @@ exports.login = async (req, res) => {
   }
 };
 
+exports.updateMyProfile = async (req, res) => {
+  try {
+    const currentUser = await User.findById(req.user.id);
+
+    if (!currentUser) {
+      return res.status(404).json({ msg: "User not found" });
+    }
+
+    const nextName = String(req.body.name || req.body.fullName || "").trim();
+    const nextContactNumber = String(req.body.contactNumber || req.body.mobile || "").trim();
+    const nextPurokNumber = String(req.body.purokNumber || req.body.purok || "").trim();
+    const nextGender = String(req.body.gender || "").trim();
+    const nextAge = req.body.age === "" || req.body.age === undefined ? undefined : Number(req.body.age);
+
+    if (!nextName) {
+      return res.status(400).json({ msg: "Full name is required" });
+    }
+
+    currentUser.name = nextName;
+
+    if (currentUser.role === "resident") {
+      if (nextPurokNumber && !ALLOWED_PUROK_OPTIONS.includes(nextPurokNumber)) {
+        return res.status(400).json({ msg: "Please select a valid purok" });
+      }
+
+      if (nextContactNumber && !/^09\d{9}$/.test(nextContactNumber)) {
+        return res.status(400).json({ msg: "Please enter a valid contact number" });
+      }
+
+      if (nextAge !== undefined && (!Number.isInteger(nextAge) || nextAge < 1 || nextAge > 120)) {
+        return res.status(400).json({ msg: "Age must be between 1 and 120" });
+      }
+
+      currentUser.purokNumber = nextPurokNumber || currentUser.purokNumber;
+      currentUser.contactNumber = nextContactNumber;
+      currentUser.age = nextAge;
+      currentUser.gender = nextGender;
+    }
+
+    await currentUser.save();
+
+    res.json({
+      user: {
+        id: currentUser._id,
+        name: currentUser.name,
+        email: currentUser.email,
+        role: currentUser.role,
+        purokNumber: currentUser.purokNumber,
+        contactNumber: currentUser.contactNumber,
+        age: currentUser.age,
+        gender: currentUser.gender,
+      },
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server error");
+  }
+};
+
 // ADMIN: LIST RESIDENTS
 exports.getResidents = async (_req, res) => {
   try {

@@ -115,6 +115,18 @@ async function persistAttachment(attachment, folderName = "comment-attachments")
 
   const mimeType = matches[1];
   const base64Data = matches[2];
+
+  // Keep image uploads inline so report photos remain viewable even when the
+  // backend runtime does not retain uploaded files between deployments/restarts.
+  if (mimeType.startsWith("image/")) {
+    return {
+      name: String(attachment.name || "Attachment").trim(),
+      mimeType,
+      url: String(attachment.url).trim(),
+      isImage: true,
+    };
+  }
+
   const extension = mimeType.split("/")[1] || "bin";
   const uploadsDir = path.join(__dirname, "..", "uploads", folderName);
 
@@ -136,10 +148,50 @@ async function persistAttachment(attachment, folderName = "comment-attachments")
 
 function buildReportListQuery(filter = {}) {
   return Report.find(filter)
-    .select("resident category description location purok status createdAt updatedAt")
+    .select("resident category description location purok status createdAt updatedAt attachment attachments")
     .populate("resident", "name email")
     .sort({ createdAt: -1 })
     .lean();
+}
+
+function normalizeAttachmentRecord(attachment) {
+  if (!attachment || typeof attachment !== "object") {
+    return attachment;
+  }
+
+  const url = String(attachment.url || "").trim();
+  const mimeType = String(attachment.mimeType || attachment.type || "").trim();
+
+  return {
+    ...attachment,
+    url,
+    mimeType,
+    isImage:
+      Boolean(attachment.isImage) ||
+      mimeType.startsWith("image/") ||
+      /^data:image\//i.test(url) ||
+      /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url || attachment.name || ""),
+  };
+}
+
+function normalizeReportRecord(report) {
+  if (!report) {
+    return report;
+  }
+
+  return {
+    ...report,
+    attachment: normalizeAttachmentRecord(report.attachment),
+    attachments: Array.isArray(report.attachments)
+      ? report.attachments.map(normalizeAttachmentRecord).filter(Boolean)
+      : [],
+    comments: Array.isArray(report.comments)
+      ? report.comments.map((comment) => ({
+          ...comment,
+          attachment: normalizeAttachmentRecord(comment.attachment),
+        }))
+      : [],
+  };
 }
 
 // RESIDENT: Create Report
@@ -202,7 +254,7 @@ exports.getMyReports = async (req, res) => {
       .populate("comments.user", "name")
       .sort({ createdAt: -1 });
 
-    res.json(reports);
+    res.json(reports.map((report) => normalizeReportRecord(report.toObject ? report.toObject() : report)));
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
   }
@@ -229,7 +281,7 @@ exports.getAllReports = async (req, res) => {
 
     const reports = await buildReportListQuery(filter);
 
-    res.json(reports);
+    res.json(reports.map(normalizeReportRecord));
 
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
@@ -248,7 +300,7 @@ exports.getReportById = async (req, res) => {
       return res.status(404).json({ msg: "Report not found" });
     }
 
-    res.json(report);
+    res.json(normalizeReportRecord(report));
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
   }

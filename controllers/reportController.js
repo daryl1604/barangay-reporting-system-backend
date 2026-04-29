@@ -154,42 +154,89 @@ function buildReportListQuery(filter = {}) {
     .lean();
 }
 
-function normalizeAttachmentRecord(attachment) {
+function getMimeTypeFromFileName(fileName = "") {
+  const normalizedName = String(fileName).toLowerCase();
+
+  if (normalizedName.endsWith(".png")) {
+    return "image/png";
+  }
+
+  if (normalizedName.endsWith(".jpg") || normalizedName.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+
+  if (normalizedName.endsWith(".gif")) {
+    return "image/gif";
+  }
+
+  if (normalizedName.endsWith(".webp")) {
+    return "image/webp";
+  }
+
+  if (normalizedName.endsWith(".bmp")) {
+    return "image/bmp";
+  }
+
+  if (normalizedName.endsWith(".svg")) {
+    return "image/svg+xml";
+  }
+
+  return "";
+}
+
+async function normalizeAttachmentRecord(attachment) {
   if (!attachment || typeof attachment !== "object") {
     return attachment;
   }
 
   const url = String(attachment.url || "").trim();
-  const mimeType = String(attachment.mimeType || attachment.type || "").trim();
+  const mimeType = String(attachment.mimeType || attachment.type || "").trim() || getMimeTypeFromFileName(attachment.name || url);
+  const isImage =
+    Boolean(attachment.isImage) ||
+    mimeType.startsWith("image/") ||
+    /^data:image\//i.test(url) ||
+    /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url || attachment.name || "");
+
+  let resolvedUrl = url;
+
+  if (isImage && url && /^\/?uploads\//i.test(url) && !/^data:/i.test(url)) {
+    try {
+      const normalizedPath = url.replace(/^\/+/, "").replace(/\//g, path.sep);
+      const absoluteFilePath = path.join(__dirname, "..", normalizedPath);
+      const fileBuffer = await fs.promises.readFile(absoluteFilePath);
+      const resolvedMimeType = mimeType || getMimeTypeFromFileName(absoluteFilePath) || "image/png";
+      resolvedUrl = `data:${resolvedMimeType};base64,${fileBuffer.toString("base64")}`;
+    } catch (error) {
+      resolvedUrl = url;
+    }
+  }
 
   return {
     ...attachment,
-    url,
+    url: resolvedUrl,
     mimeType,
-    isImage:
-      Boolean(attachment.isImage) ||
-      mimeType.startsWith("image/") ||
-      /^data:image\//i.test(url) ||
-      /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url || attachment.name || ""),
+    isImage,
   };
 }
 
-function normalizeReportRecord(report) {
+async function normalizeReportRecord(report) {
   if (!report) {
     return report;
   }
 
   return {
     ...report,
-    attachment: normalizeAttachmentRecord(report.attachment),
+    attachment: await normalizeAttachmentRecord(report.attachment),
     attachments: Array.isArray(report.attachments)
-      ? report.attachments.map(normalizeAttachmentRecord).filter(Boolean)
+      ? (await Promise.all(report.attachments.map(normalizeAttachmentRecord))).filter(Boolean)
       : [],
     comments: Array.isArray(report.comments)
-      ? report.comments.map((comment) => ({
-          ...comment,
-          attachment: normalizeAttachmentRecord(comment.attachment),
-        }))
+      ? await Promise.all(
+          report.comments.map(async (comment) => ({
+            ...comment,
+            attachment: await normalizeAttachmentRecord(comment.attachment),
+          }))
+        )
       : [],
   };
 }
@@ -254,7 +301,9 @@ exports.getMyReports = async (req, res) => {
       .populate("comments.user", "name")
       .sort({ createdAt: -1 });
 
-    res.json(reports.map((report) => normalizeReportRecord(report.toObject ? report.toObject() : report)));
+    res.json(
+      await Promise.all(reports.map((report) => normalizeReportRecord(report.toObject ? report.toObject() : report)))
+    );
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
   }
@@ -281,7 +330,7 @@ exports.getAllReports = async (req, res) => {
 
     const reports = await buildReportListQuery(filter);
 
-    res.json(reports.map(normalizeReportRecord));
+    res.json(await Promise.all(reports.map(normalizeReportRecord)));
 
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
@@ -300,7 +349,7 @@ exports.getReportById = async (req, res) => {
       return res.status(404).json({ msg: "Report not found" });
     }
 
-    res.json(normalizeReportRecord(report));
+    res.json(await normalizeReportRecord(report));
   } catch (err) {
     res.status(500).json({ msg: "Server error" });
   }

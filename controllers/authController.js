@@ -238,6 +238,42 @@ exports.getResidentById = async (req, res) => {
   }
 };
 
+// CHANGE PASSWORD
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ msg: "Current password and new password are required" });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ msg: "New password must be at least 8 characters long" });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ msg: "User not found" });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ msg: "Current password is incorrect" });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+
+    await user.save();
+
+    res.json({ msg: "Password changed successfully" });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server error");
+  }
+};
+
 // ADMIN: DELETE RESIDENT
 exports.deleteResident = async (req, res) => {
   try {
